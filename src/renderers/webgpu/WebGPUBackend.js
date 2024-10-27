@@ -151,10 +151,15 @@ class WebGPUBackend extends Backend {
 				colorAttachments: [ {
 					view: null
 				} ],
-				depthStencilAttachment: {
-					view: this.textureUtils.getDepthBuffer( renderer.depth, renderer.stencil ).createView()
-				}
 			};
+
+			if ( this.renderer.depth === true || this.renderer.stencil === true ) {
+
+				descriptor.depthStencilAttachment = {
+					view: this.textureUtils.getDepthBuffer( renderer.depth, renderer.stencil ).createView()
+				};
+
+			}
 
 			const colorAttachment = descriptor.colorAttachments[ 0 ];
 
@@ -263,16 +268,21 @@ class WebGPUBackend extends Backend {
 
 			}
 
-			const depthTextureData = this.get( renderContext.depthTexture );
-
-			const depthStencilAttachment = {
-				view: depthTextureData.texture.createView()
-			};
 
 			descriptor = {
 				colorAttachments,
-				depthStencilAttachment
 			};
+
+			if ( renderContext.depth ) {
+
+				const depthTextureData = this.get( renderContext.depthTexture );
+
+				const depthStencilAttachment = {
+					view: depthTextureData.texture.createView()
+				};
+				descriptor.depthStencilAttachment = depthStencilAttachment;
+
+			}
 
 			descriptors[ cacheKey ] = descriptor;
 
@@ -825,6 +835,12 @@ class WebGPUBackend extends Backend {
 
 	}
 
+	async waitForGPU() {
+
+		await this.device.queue.onSubmittedWorkDone();
+
+	}
+
 	// render object
 
 	draw( renderObject, info ) {
@@ -836,9 +852,9 @@ class WebGPUBackend extends Backend {
 		const currentSets = renderContextData.currentSets;
 		const passEncoderGPU = renderContextData.currentPass;
 
-		const drawParms = renderObject.getDrawParameters();
+		const drawParams = renderObject.getDrawParameters();
 
-		if ( drawParms === null ) return;
+		if ( drawParams === null ) return;
 
 		// pipeline
 
@@ -960,17 +976,41 @@ class WebGPUBackend extends Backend {
 
 		} else if ( hasIndex === true ) {
 
-			const { vertexCount: indexCount, instanceCount, firstVertex: firstIndex } = drawParms;
+			const { vertexCount: indexCount, instanceCount, firstVertex: firstIndex } = drawParams;
 
-			passEncoderGPU.drawIndexed( indexCount, instanceCount, firstIndex, 0, 0 );
+			const indirect = renderObject.getIndirect();
+
+			if ( indirect !== null ) {
+
+				const buffer = this.get( indirect ).buffer;
+
+				passEncoderGPU.drawIndexedIndirect( buffer, 0 );
+
+			} else {
+
+				passEncoderGPU.drawIndexed( indexCount, instanceCount, firstIndex, 0, 0 );
+
+			}
 
 			info.update( object, indexCount, instanceCount );
 
 		} else {
 
-			const { vertexCount, instanceCount, firstVertex } = drawParms;
+			const { vertexCount, instanceCount, firstVertex } = drawParams;
 
-			passEncoderGPU.draw( vertexCount, instanceCount, firstVertex, 0 );
+			const indirect = renderObject.getIndirect();
+
+			if ( indirect !== null ) {
+
+				const buffer = this.get( indirect ).buffer;
+
+				passEncoderGPU.drawIndirect( buffer, 0 );
+
+			} else {
+
+				passEncoderGPU.draw( vertexCount, instanceCount, firstVertex, 0 );
+
+			}
 
 			info.update( object, vertexCount, instanceCount );
 
@@ -1056,6 +1096,7 @@ class WebGPUBackend extends Backend {
 			utils.getSampleCountRenderContext( renderContext ),
 			utils.getCurrentColorSpace( renderContext ), utils.getCurrentColorFormat( renderContext ), utils.getCurrentDepthStencilFormat( renderContext ),
 			utils.getPrimitiveTopology( object, material ),
+			renderObject.getGeometryCacheKey(),
 			renderObject.clippingContext.cacheKey
 		].join();
 
@@ -1322,6 +1363,12 @@ class WebGPUBackend extends Backend {
 	createStorageAttribute( attribute ) {
 
 		this.attributeUtils.createAttribute( attribute, GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST );
+
+	}
+
+	createIndirectStorageAttribute( attribute ) {
+
+		this.attributeUtils.createAttribute( attribute, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST );
 
 	}
 
